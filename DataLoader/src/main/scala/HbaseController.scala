@@ -5,20 +5,46 @@ import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import org.apache.hadoop.hbase.mapreduce.TableInputFormat
 import org.apache.hadoop.hbase.util.Bytes
 import org.apache.hadoop.hbase.{HBaseConfiguration, TableName}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.{SparkConf, SparkContext}
+
+import scala.HotMoviesRec.MONGODB_MOVIE_COLLECTION
+
 
 object HbaseController {
   val spconf = new SparkConf().setAppName("test-hbase").setMaster("local[*]")
-  val sc = new SparkContext(spconf)
+  val sparkSess: SparkSession = SparkSession.builder().config(spconf).getOrCreate()
+//  val sc = new SparkContext(spconf)
 
   val hbconf = HBaseConfiguration.create()
   hbconf.set("hbase.zookeeper.property.clientPort", "2181")
   hbconf.set("hbase.zookeeper.quorum", "master,hadoop0")
   hbconf.set(TableInputFormat.INPUT_TABLE, "cora")
 
+  val mongoURI = "mongodb://localhost:27017/MovieDB"
   val connection = ConnectionFactory.createConnection(hbconf);
   val admin = connection.getAdmin();
+  import sparkSess.implicits._
 
+  def movieData(): Unit ={
+
+    val movieDF = sparkSess.read
+      .option("uri", mongoURI)
+      .option("collection", MONGODB_MOVIE_COLLECTION)
+      .format("com.mongodb.spark.sql")
+      .load()
+      .as[Movie]
+      .toDF()
+
+    movieDF.createOrReplaceTempView("movieee")
+    val movie_moviedf = sparkSess.sql("select mid, count(mid) as count " +
+      "from movieee " +
+      "group by mid " +
+      "limit(3)"
+    )
+    println("movie_moviedf: ")
+    movie_moviedf.rdd.foreach(println)
+  }
 
   def scanDataFromHTable(tableName:String,columnFamily: String, column: String) = {
     //    val TabName = TableName.valueOf("cora")
@@ -42,7 +68,9 @@ object HbaseController {
     val tables = admin.listTables()
     tables.foreach(println)
 
-    val hbaseRDD = sc.newAPIHadoopRDD(hbconf,
+    movieData()
+
+    val hbaseRDD = sparkSess.sparkContext.newAPIHadoopRDD(hbconf,
       classOf[TableInputFormat],
       classOf[ImmutableBytesWritable],
       classOf[Result]
